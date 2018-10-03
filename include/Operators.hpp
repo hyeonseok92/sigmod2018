@@ -15,6 +15,7 @@
 #include "Parser.hpp"
 #include "Config.hpp"
 #include "Column.hpp"
+#include <tbb/concurrent_unordered_map.h>
 //#include "Joiner.hpp"
 
 class Joiner;
@@ -144,29 +145,18 @@ class Join : public Operator {
     void createMappingForBindings();
 
     char pad1[CACHE_LINE_SIZE];
-    int pendingMakingHistogram[2*CACHE_LINE_SIZE]; // = { -1, -1};
-    int pendingScattering[2*CACHE_LINE_SIZE];//  = {-1,-1};
-    int pendingPartitioning = -1;
+    int pendingBuilding;
+    int pendingProbing;
     char pad2[CACHE_LINE_SIZE];
-    int pendingSubjoin = -1;
-    char pad3[CACHE_LINE_SIZE];
 
     // sequentially aloocated address for partitions, will be freed after materializing the result
-    uint64_t* partitionTable[2];
-    const unsigned partitionSize = L2_SIZE/16;
     unsigned cntPartition;
 
-    unsigned taskLength[2];
-    const unsigned minTuplesPerTask = 200; // minimum part table size
+    tbb::concurrent_unordered_multimap<uint64_t, uint64_t> hashTable;
 
-    std::vector<std::vector<uint64_t*>> partition[2]; // just pointing partitionTable[], it is built after histogram, 각 파티션별 컬럼들의 위치를 포인팅  [LR][partition][column][tuple] P|C1sC2sC3s|P|C1sC2sC3s|...
-    std::vector<std::vector<unsigned>> histograms[2]; // [LR][taskIndex][partitionIndex], 각 파티션에 대한 벡터는 heap에 allocate되나? 안그럼 invalidate storㅇ이 일어날거 같은데
-    std::vector<unsigned> partitionLength[2]; // #tuples per each partition
-
-    void histogramTask(boost::asio::io_service* ioService, int cntTask, int taskIndex, int leftOrRight, unsigned start, unsigned length);
-    void scatteringTask(boost::asio::io_service* ioService, int taskIndex, int leftOrRight, unsigned start, unsigned length); 
+    void buildingTask(boost::asio::io_service* ioService, uint64_t start, uint64_t length); 
     // for cache, partition must be allocated sequentially 
-    void subJoinTask(boost::asio::io_service* ioService, int taskIndex, std::vector<uint64_t*> left, unsigned leftLimit, std::vector<uint64_t*> right, unsigned rightLimit);  
+    void probingTask(boost::asio::io_service* ioService, int taskId, uint64_t start, uint64_t length);  
     
     /// Columns that have to be materialized
     std::unordered_set<SelectInfo> requestedColumns;
